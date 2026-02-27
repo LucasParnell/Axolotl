@@ -28,6 +28,9 @@ compile_commands.json
 *.swo
 *~
 
+# Clangd / language server index
+.cache/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -35,8 +38,9 @@ Thumbs.db
 # Obsidian (plan/ may contain local workspace state)
 plan/**/.obsidian/
 
-# Debug / analysis
+# Debug / analysis (generated outputs)
 *.dSYM/
 *.su
 *.idb
 *.pdb
+analysis/
