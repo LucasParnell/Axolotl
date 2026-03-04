@@ -17,6 +17,15 @@ CMakeFiles/
 cmake_install.cmake
 compile_commands.json
 
+
+.directory
+
+launch.json
+tasks.json
+
+plan/
+plan/*
+
 # Compiled objects and binaries
 *.o
 *.obj
