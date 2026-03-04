@@ -24,6 +24,7 @@ class IrBuilder {
 
     ArenaAllocator* GetArena() { return arena_; }
     uint32_t GetBlockLength() const { return block_len_; }
+    uint32_t GetBlockCycles() const { return block_cycles_; }
     MemoryBus* GetBus() const { return bus_; }
 
  private:
@@ -35,6 +36,7 @@ class IrBuilder {
     LiteralPool literal_pool_;
 
     uint32_t block_len_;
+    uint32_t block_cycles_{0};
 
     uint32_t known_reg_val_[16];
     bool     known_reg_valid_[16];

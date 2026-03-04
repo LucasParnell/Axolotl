@@ -3,12 +3,22 @@
 Concatenate disassembly files, adding section comments for filename, block address,
 and mode. Only concatenates ARM with ARM and x86 with x86.
 
-Input: paths to .dis files (or directories containing .dis files).
+ARM/Thumb chunks may include an "--- IR ---" section (when block_*_ir.txt exists
+or disasm_dump.py was run with IR). Concat treats each block as one chunk and
+preserves ARM+IR combined content.
+
+Input:
+  - Paths to .dis files (or directories containing .dis files).
+  - Directories containing analysis dumps (block_*_arm.bin, block_*_thumb.bin,
+    block_*_ir.txt, block_*_meta.txt, block_*_x86.bin from the debug dump at end of execution).
+    For analysis dirs, capstone is required (pip install capstone).
+
 Output: arm_combined.dis and x86_combined.dis (or --output directory).
 
 Usage:
   python scripts/concat_disasm.py block_00001966_thumb.dis block_00001bbc_thumb.dis
   python scripts/concat_disasm.py out/dis/
+  python scripts/concat_disasm.py out/analysis/   # analysis dump from Axolotl run
   python scripts/concat_disasm.py out/dis/ -o combined/
 """
 
@@ -29,6 +39,64 @@ X86_HEADER = re.compile(
     r"^\s*;\s*x86-64\s+JIT\s+\(GBA\s+block\s+(0x[0-9a-fA-F]+)\s*-\s*(0x[0-9a-fA-F]+)\s+(ARM|Thumb)\)",
     re.IGNORECASE,
 )
+
+
+def is_analysis_dir(path: Path) -> bool:
+    """True if path is a directory containing block_*_meta.txt (analysis dump)."""
+    return path.is_dir() and bool(list(path.glob("block_*_meta.txt")))
+
+
+def collect_from_analysis_dir(
+    analysis_dir: Path,
+) -> tuple[list[str], list[str]]:
+    """
+    Disassemble analysis dump (block_*_meta.txt + _arm/_thumb.bin + _x86.bin)
+    using disasm_dump logic. Returns (arm_chunks, x86_chunks).
+    Requires capstone (disasm_dump will exit with an error if not installed).
+    """
+    script_dir = Path(__file__).resolve().parent
+    if str(script_dir) not in sys.path:
+        sys.path.insert(0, str(script_dir))
+    from disasm_dump import (
+        block_prefix_from_meta_path,
+        format_arm_block,
+        format_x86_block,
+        parse_meta,
+    )
+
+    arm_chunks: list[str] = []
+    x86_chunks: list[str] = []
+    meta_files = sorted(analysis_dir.glob("block_*_meta.txt"))
+    for meta_path in meta_files:
+        prefix = block_prefix_from_meta_path(meta_path)
+        meta = parse_meta(meta_path)
+        is_thumb = meta["mode"] == "Thumb"
+        arm_suffix = "_thumb.bin" if is_thumb else "_arm.bin"
+        arm_path = analysis_dir / (prefix + arm_suffix)
+        x86_path = analysis_dir / (prefix + "_x86.bin")
+        if not arm_path.exists():
+            sys.stderr.write("warning: missing %s, skipping block %s\n" % (arm_path.name, prefix))
+            continue
+        if not x86_path.exists():
+            sys.stderr.write("warning: missing %s, skipping block %s\n" % (x86_path.name, prefix))
+            continue
+        arm_bytes = arm_path.read_bytes()
+        x86_bytes = x86_path.read_bytes()
+        start = meta["start"]
+        ir_path = analysis_dir / (prefix + "_ir.txt")
+        ir_text = ir_path.read_text() if ir_path.exists() else None
+        arm_text = format_arm_block(meta, arm_bytes, start, include_context=False, ir_text=ir_text)
+        x86_text = format_x86_block(meta, x86_bytes, 0, include_context=False)
+        section_name_arm = prefix + arm_suffix.replace(".bin", "")
+        section_name_x86 = prefix + "_x86"
+        start_hex = "0x%08x" % meta["start"]
+        end_hex = "0x%08x" % meta["end"]
+        mode = meta["mode"]
+        header_arm = section_comment(section_name_arm, start_hex, end_hex, mode)
+        header_x86 = section_comment(section_name_x86, start_hex, end_hex, mode)
+        arm_chunks.append(header_arm + "\n" + arm_text.strip() + "\n")
+        x86_chunks.append(header_x86 + "\n" + x86_text.strip() + "\n")
+    return arm_chunks, x86_chunks
 
 
 def detect_and_parse(path: Path, text: str) -> tuple[str | None, str | None, str | None, str | None]:
@@ -83,7 +151,7 @@ def main() -> None:
         "paths",
         nargs="+",
         type=Path,
-        help="Paths to .dis files or directories containing .dis files",
+        help="Paths to .dis files, or directories containing .dis files or analysis dumps (block_*_meta.txt + _arm/_thumb.bin + _x86.bin)",
     )
     ap.add_argument(
         "-o", "--output",
@@ -105,14 +173,32 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    files = collect_dis_files(args.paths)
-    if not files:
-        print("error: no .dis files found", file=sys.stderr)
-        sys.exit(1)
-
     arm_chunks: list[str] = []
     x86_chunks: list[str] = []
 
+    # Process analysis directories first (block_*_meta.txt + .bin)
+    analysis_dirs = [p.resolve() for p in args.paths if is_analysis_dir(p)]
+    if analysis_dirs:
+        try:
+            import capstone  # noqa: F401
+        except ImportError:
+            print(
+                "error: for analysis directories, capstone is required. Run: pip install capstone",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    for adir in sorted(analysis_dirs):
+        try:
+            a_chunks, x_chunks = collect_from_analysis_dir(adir)
+            arm_chunks.extend(a_chunks)
+            x86_chunks.extend(x_chunks)
+        except Exception as e:
+            print("error: failed to process analysis dir %s: %s" % (adir, e), file=sys.stderr)
+            sys.exit(1)
+
+    # Process .dis files from paths that are not analysis dirs
+    other_paths = [p for p in args.paths if not is_analysis_dir(p.resolve())]
+    files = collect_dis_files(other_paths)
     for f in files:
         text = f.read_text()
         kind, start, end, mode = detect_and_parse(f, text)
@@ -125,6 +211,10 @@ def main() -> None:
             arm_chunks.append(block)
         else:
             x86_chunks.append(block)
+
+    if not arm_chunks and not x86_chunks:
+        print("error: no .dis files and no analysis blocks found", file=sys.stderr)
+        sys.exit(1)
 
     out_dir = args.output or Path.cwd()
     arm_out = args.arm if args.arm is not None else out_dir / "arm_combined.dis"

@@ -3,6 +3,14 @@ build/
 build-artifacts/
 out/
 
+build-debug/
+build-release/
+
+build-maxopt/
+
+# CMake FetchContent deps
+build*/_deps/
+
 # CMake (generated in build dirs; listed here if created at root)
 CMakeCache.txt
 CMakeFiles/
@@ -38,9 +46,27 @@ Thumbs.db
 # Obsidian (plan/ may contain local workspace state)
 plan/**/.obsidian/
 
+# Python
+scripts/venv/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
 # Debug / analysis (generated outputs)
 *.dSYM/
 *.su
 *.idb
 *.pdb
 analysis/
+tests/
+research/
+tools/
+
+# Local notes / scratch artifacts
+TESTING.md
+Tracker.md
+bios_disassembly.txt
+files.zip
+findings.txt
+.clangd

@@ -26,11 +26,25 @@ std::string IrPrinter::PrintArena(ArenaAllocator* arena, uint32_t start_pc) {
 
         if (n.fields.set_flags) ss << " 'S'";
 
-        if (n.fields.shift_by_reg || n.fields.shift_imm != 0) {
+        // Note: in ARM/Thumb encodings, some shifts use "imm=0" to mean a special case:
+        // - LSR #0 => LSR #32
+        // - ASR #0 => ASR #32
+        // - ROR #0 => RRX
+        const bool has_shift = n.fields.shift_by_reg || n.fields.shift_imm != 0 || ((n.fields.shift_type & 3) != 0);
+        if (has_shift) {
+            const uint32_t st = n.fields.shift_type & 3;
             const char* shift_names[] = {"LSL", "LSR", "ASR", "ROR"};
-            ss << " shift:" << shift_names[n.fields.shift_type & 3];
-            if (n.fields.shift_by_reg) ss << ",Rs:R" << (int)n.immediate;
-            else ss << ",#" << (int)n.fields.shift_imm;
+            if (n.fields.shift_by_reg) {
+                ss << " shift:" << shift_names[st] << ",Rs:R" << (int)n.immediate;
+            } else {
+                if (st == 3 && n.fields.shift_imm == 0) {
+                    ss << " shift:RRX";
+                } else if ((st == 1 || st == 2) && n.fields.shift_imm == 0) {
+                    ss << " shift:" << shift_names[st] << ",#32";
+                } else {
+                    ss << " shift:" << shift_names[st] << ",#" << (int)n.fields.shift_imm;
+                }
+            }
         }
 
         if (n.fields.cond != 0xE) {

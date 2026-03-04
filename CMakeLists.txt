@@ -37,32 +37,39 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "amd64.*|x86_64.*|AMD64.*")
     set(JIT_FLAGS "${JIT_FLAGS} -msse4.2 -mavx2")
 endif()
 
+# Optional: AddressSanitizer (Debug only; catches use-after-free, buffer overflows in host + JIT-triggered bad accesses)
+# Usage: cmake -DUSE_ASAN=ON -DCMAKE_BUILD_TYPE=Debug -B build-asan && cmake --build build-asan
+option(USE_ASAN "Build with AddressSanitizer in Debug builds" OFF)
+if(USE_ASAN AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(ASAN_FLAGS "-fsanitize=address -fno-omit-frame-pointer -g")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ASAN_FLAGS}")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${ASAN_FLAGS}")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${ASAN_FLAGS}")
+endif()
+
 # Debug Profile (Strict warnings, debug symbols)
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -DB_DEBUG -Wall -Wextra -Wpedantic ${JIT_FLAGS}")
+# DISASM_LAST_BLOCK: run Python+Capstone on last block's ARM/x86 before exit (run from project root).
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -DB_DEBUG -DDISASM_LAST_BLOCK -Wall -Wextra -Wpedantic ${JIT_FLAGS}")
 
 # Release Profile (Maximum speed, Link-Time Optimization)
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG -flto ${JIT_FLAGS}")
 
 # ── GLFW + OpenGL ────────────────────────────────────────────────────────
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-  # Cross-compiling to Windows: build GLFW from source (no host glfw needed)
-  include(FetchContent)
-  FetchContent_Declare(
-    glfw
-    GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG        3.4
-  )
-  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-  FetchContent_MakeAvailable(glfw)
-else()
-  find_package(glfw3 REQUIRED)
-endif()
+# Download and build GLFW via FetchContent (no system install required)
+FetchContent_Declare(
+  glfw
+  GIT_REPOSITORY https://github.com/glfw/glfw.git
+  GIT_TAG        3.4
+)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(glfw)
+
 find_package(OpenGL REQUIRED)
 
-file(GLOB_RECURSE SOURCES "src/*.cc" "src/*.cpp" "src/*.c")
-file(GLOB_RECURSE HEADERS "inc/*.h" "inc/*.hpp" "src/*.h" "src/*.hpp")
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cc" "src/*.cpp" "src/*.c")
+file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS "inc/*.h" "inc/*.hpp" "src/*.h" "src/*.hpp")
 # Exclude main.cc so ir_dump can link against the lib without duplicate main
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/src/main.cc")
 
@@ -71,6 +78,16 @@ add_library(Axolotl_lib
         ${HEADERS}
 )
 target_link_libraries(Axolotl_lib PRIVATE xbyak::xbyak)
+if(UNIX AND NOT APPLE)
+  find_package(ALSA)
+  if(ALSA_FOUND)
+    target_link_libraries(Axolotl_lib PRIVATE ALSA::ALSA)
+    target_compile_definitions(Axolotl_lib PRIVATE AXOLOTL_HAS_ALSA=1)
+  endif()
+endif()
+# These units use throw/catch (Xbyak, IR builder); compile with exceptions enabled.
+set_source_files_properties(src/system/jit_emitter.cc src/system/jit_lifter.cc src/system/dispatcher.cc
+    PROPERTIES COMPILE_FLAGS "-fexceptions -frtti")
 
 add_executable(Axolotl src/main.cc)
 
@@ -87,8 +104,5 @@ if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/res")
           ${CMAKE_SOURCE_DIR}/res $<TARGET_FILE_DIR:Axolotl>/res)
 endif()
 
-# ir_dump: dump IR for given ARM instruction hex (for fuzzer / manual comparison)
-add_executable(ir_dump tools/ir_dump.cc)
-target_link_libraries(ir_dump PRIVATE Axolotl_lib)
-
+include(CTest)
 add_subdirectory(tests)

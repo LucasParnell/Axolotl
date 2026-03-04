@@ -20,11 +20,14 @@ class ArenaAllocator {
         }
     }
 
+    ~ArenaAllocator() { std::free(data_); }
+
     ArenaAllocator(const ArenaAllocator&) = delete;
     ArenaAllocator& operator=(const ArenaAllocator&) = delete;
 
     template <typename T>
     T* Alloc(size_t count = 1) {
+        if (!data_) return nullptr;  // OOM at construction (Bug 6.2)
         size_t align = alignof(T);
         size_t aligned_used = (used_ + align - 1) & ~(align - 1);
         size_t total_size = sizeof(T) * count;

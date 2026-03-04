@@ -13,6 +13,9 @@ struct CompileTarget {
 // SPSC queue: JIT pushes seed PCs, PreWarmer pops.
 class SeedQueue {
  public:
+    static constexpr size_t BufferSize() { return kBufferSize; }
+    static constexpr size_t MaxQueued() { return kBufferSize - 1u; }
+
     bool Push(uint32_t pc, bool is_thumb) {
         size_t current_tail = tail_.load(std::memory_order_relaxed);
         size_t next_tail = (current_tail + 1) % buffer_.size();
@@ -33,7 +36,8 @@ class SeedQueue {
     }
 
  private:
-    std::array<CompileTarget, 2048> buffer_;
+    static constexpr size_t kBufferSize = 2048;
+    std::array<CompileTarget, kBufferSize> buffer_;
     std::atomic<size_t> head_{0};
     std::atomic<size_t> tail_{0};
 };

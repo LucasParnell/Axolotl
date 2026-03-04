@@ -19,6 +19,14 @@
             "type": "shell",
             "command": "cmake -S '${workspaceFolder}' -B '${workspaceFolder}/build-artifacts' -DCMAKE_BUILD_TYPE=Debug",
             "detail": "Configures the project for a debug build."
+        },
+        {
+            "label": "Run (Valgrind)",
+            "type": "shell",
+            "command": "cmake --build '${workspaceFolder}/build-artifacts' && valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes '${workspaceFolder}/out/Axolotl'",
+            "group": "test",
+            "detail": "F8 – build & run main under Valgrind"
         }
-    ]
+    ],
+    "inputs": []
 }

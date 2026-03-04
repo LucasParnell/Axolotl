@@ -4,8 +4,10 @@ Disassemble GBAEmu block dumps (ARM/Thumb + x86-64 JIT) and crash fault dumps
 with address adjustment and metadata-derived comments.
 
 Supports two dump layouts:
-  1. Per-block dumps (dump all): block_*_arm.bin, block_*_thumb.bin, block_*_meta.txt
+  1. Per-block dumps (dump all): block_*_arm.bin, block_*_thumb.bin, block_*_meta.txt, block_*_ir.txt (IR optional)
   2. Combined dump (dump_asm):  combined_arm.bin + combined_arm.map
+
+When block_*_ir.txt is present, ARM/Thumb output includes an "--- IR ---" section for that block.
 
 Usage:
   python scripts/disasm_dump.py <dump_dir> [block_prefix]
@@ -281,6 +283,7 @@ def format_arm_block(
     code: bytes,
     start: int,
     include_context: bool = True,
+    ir_text: str | None = None,
 ) -> str:
     is_thumb = meta["mode"] == "Thumb"
     lines = []
@@ -296,6 +299,10 @@ def format_arm_block(
     ):
         comment_str = ("  ; " + comment.strip()) if comment else ""
         lines.append(f"  0x{addr:08x}:  {disasm}{comment_str}")
+    if ir_text:
+        lines.append("")
+        lines.append("--- IR ---")
+        lines.append(ir_text.strip())
     return "\n".join(lines)
 
 
@@ -439,7 +446,9 @@ def run_block(
     if arm_path.exists():
         code = arm_path.read_bytes()
         start = meta["start"]
-        text = format_arm_block(meta, code, start, include_context)
+        ir_path = dump_dir / (prefix + "_ir.txt")
+        ir_text = ir_path.read_text() if ir_path.exists() else None
+        text = format_arm_block(meta, code, start, include_context, ir_text=ir_text)
         out_lines.append("--- ARM/Thumb (guest addresses) ---")
         out_lines.append(text)
         out_lines.append("")
