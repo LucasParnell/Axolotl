@@ -66,6 +66,8 @@ class JitDispatcher {
 
     void Stop() { system_running_.store(false, std::memory_order_relaxed); }
     bool Running() const { return system_running_.load(std::memory_order_relaxed); }
+    void SetHostPaused(bool paused) { host_pause_requested_.store(paused, std::memory_order_release); }
+    bool HostPaused() const { return host_pause_active_.load(std::memory_order_acquire); }
 
     void SetTimingCallbacks(TimingCallbacks cb) { timing_callbacks_ = std::move(cb); }
 
@@ -87,9 +89,12 @@ class JitDispatcher {
     void DisasmBlockAtAddress(uint32_t pc);
     const std::vector<BlockDump>& GetBlockDumps() const { return block_dumps_; }
     CpuState& GetCpuState() { return cpu_state_; }
-    bool IsPaused() const { return paused_.load(std::memory_order_acquire); }
+    bool IsPaused() const {
+        return paused_.load(std::memory_order_acquire) ||
+               host_pause_active_.load(std::memory_order_acquire);
+    }
 #else
-    bool IsPaused() const { return false; }
+    bool IsPaused() const { return host_pause_active_.load(std::memory_order_acquire); }
 #endif
 
     std::atomic<bool> system_running_{true};
@@ -153,6 +158,7 @@ class JitDispatcher {
     void* LookupReadyBlockCache(uint64_t block_key) const;
     void UpsertBlockDump(BlockDump&& dump);
     void ApplyUsageStatsToDump(BlockDump* dump) const;
+    void HandleHostPause();
 
 #ifdef B_DEBUG
     void HandlePauseStep();
@@ -163,6 +169,8 @@ class JitDispatcher {
     std::atomic<bool>     paused_         {false};
     std::atomic<int32_t>  step_count_     {0};
 #endif
+    std::atomic<bool>     host_pause_requested_{false};
+    std::atomic<bool>     host_pause_active_{false};
 
     // ── Timing ────────────────────────────────────────────────────────────
     int32_t timing_scanline_{0};         // current scanline 0..227

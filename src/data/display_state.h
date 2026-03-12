@@ -26,6 +26,13 @@ struct DisplayState {
     uint8_t buffers[2][GBA_WIDTH * GBA_HEIGHT * 3]{};
     std::atomic<int>  frontIndex{0};
     std::atomic<bool> frameDirty{false};
+    bool fullscreen = false;
+    int windowed_x = 0;
+    int windowed_y = 0;
+    int windowed_width = GBA_WIDTH * SCALE;
+    int windowed_height = GBA_HEIGHT * SCALE;
+    int last_fb_width = 0;
+    int last_fb_height = 0;
 
     std::atomic<bool> closed{false};
 };

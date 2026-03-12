@@ -2,10 +2,10 @@
 
 #include "data/display_state.h"
 
-class Display {
+class GlDisplay {
 public:
-    Display();
-    ~Display();
+    GlDisplay();
+    ~GlDisplay();
 
     bool init();
     bool tick();
@@ -15,11 +15,15 @@ public:
 
     bool shouldClose() const;
     void requestClose();
+    GLFWwindow* GetWindow() const { return state.window; }
+    void toggleFullscreen();
+    bool isFullscreen() const { return state.fullscreen; }
 
 private:
     void createTexture();
     void buildQuadVAO();
     void compileShaders();
+    void updateViewportIfNeeded();
 
     DisplayState state;
 };

@@ -1566,7 +1566,7 @@ uint16_t MemoryBus::Read16(uint32_t addr, uint32_t current_pc) const {
             if (off == 0x202) data = io_IF_.load(std::memory_order_relaxed);
             else if (off == 0x204) data = io_WAITCNT_;
             else if (off == 0x208) data = io_IME_;
-            else if (off == 0x130) data = 0x03FF;  // KEYINPUT: All keys released
+            else if (off == 0x130) data = io_KEYINPUT_.load(std::memory_order_relaxed);
             else if (off == 0x084) data = io_regs_[off] & 0x80;  // SOUNDCNT_X
             else data = static_cast<uint16_t>(io_regs_[off]) | (static_cast<uint16_t>(io_regs_[off + 1]) << 8);
         } else if ((aligned_addr >> 24) >= 0x08 && (aligned_addr >> 24) <= 0x0D) {
@@ -1647,6 +1647,10 @@ uint8_t MemoryBus::Read8(uint32_t addr, uint32_t current_pc) const {
             return static_cast<uint8_t>(open_bus >> ((addr & 3) * 8));
         }
     }
+}
+
+void MemoryBus::SetKeyInputState(uint16_t keyinput) {
+    io_KEYINPUT_.store(static_cast<uint16_t>(keyinput & 0x03FFu), std::memory_order_relaxed);
 }
 
 

@@ -92,6 +92,24 @@ void JitDispatcher::DisasmBlockAtAddress(uint32_t pc) {
 }
 #endif  // B_DEBUG
 
+void JitDispatcher::HandleHostPause() {
+    bool active = host_pause_active_.load(std::memory_order_acquire);
+    const bool requested = host_pause_requested_.load(std::memory_order_acquire);
+    if (requested != active) {
+        host_pause_active_.store(requested, std::memory_order_release);
+        active = requested;
+    }
+
+    while (active && system_running_.load(std::memory_order_relaxed)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        const bool next_requested = host_pause_requested_.load(std::memory_order_acquire);
+        if (next_requested != active) {
+            host_pause_active_.store(next_requested, std::memory_order_release);
+            active = next_requested;
+        }
+    }
+}
+
 #include <cstdlib>
 #include <sys/wait.h>
 
@@ -620,6 +638,7 @@ void JitDispatcher::Run(uint32_t start_pc, bool is_thumb) {
 
     while (system_running_.load(std::memory_order_relaxed)) {
         AXOLOTL_PROFILE_SCOPE("dispatcher.loop");
+        HandleHostPause();
 #ifdef B_DEBUG
         // Handle manual pause/step controls on every loop iteration, including
         // periods where the CPU is halted and would otherwise short-circuit.

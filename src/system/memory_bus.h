@@ -71,6 +71,7 @@ class MemoryBus {
         /** Advance hardware timers by CPU cycles. Called from dispatcher timing. */
         void StepTimers(uint32_t cpu_cycles);
         void SetAudioSampleCallback(AudioBatchCallback callback, void* user);
+        void SetKeyInputState(uint16_t keyinput);
 
         // CpuState* for I/O side effects (HALTCNT, etc.); may be nullptr for non-JIT callers.
         void Write32(CpuState* s, uint32_t addr, uint32_t value);
@@ -112,6 +113,7 @@ class MemoryBus {
         std::atomic<uint16_t> io_IF_{0};  // 0x04000202 — write-1-to-clear; bit 0 = VBlank
         uint16_t io_IME_ = 0;              // 0x04000208 — interrupt master enable
         uint16_t io_WAITCNT_ = 0; // 0x04000204 — waitstate control
+        std::atomic<uint16_t> io_KEYINPUT_{0x03FF};  // 0x04000130 — active-low keypad state
         std::array<uint16_t, 4> timer_reload_{0, 0, 0, 0};
         std::array<uint32_t, 4> timer_subcycles_{0, 0, 0, 0};
         std::atomic<uint64_t> irq_vblank_raised_{0};

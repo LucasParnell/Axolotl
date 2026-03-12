@@ -11,8 +11,6 @@ project(Axolotl)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include_directories(src inc)
-
 # ── Xbyak (JIT assembler for x86/x64) ───────────────────────────────────────
 include(FetchContent)
 FetchContent_Declare(
@@ -67,6 +65,7 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glfw)
 
 find_package(OpenGL REQUIRED)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cc" "src/*.cpp" "src/*.c")
 file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS "inc/*.h" "inc/*.hpp" "src/*.h" "src/*.hpp")
@@ -77,6 +76,15 @@ add_library(Axolotl_lib
         ${SOURCES}
         ${HEADERS}
 )
+target_include_directories(Axolotl_lib
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/system
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/util
+        ${CMAKE_CURRENT_SOURCE_DIR}/inc
+)
+target_link_libraries(Axolotl_lib PUBLIC Qt6::Core Qt6::Widgets)
 target_link_libraries(Axolotl_lib PRIVATE xbyak::xbyak)
 if(UNIX AND NOT APPLE)
   find_package(ALSA)
@@ -91,7 +99,7 @@ set_source_files_properties(src/system/jit_emitter.cc src/system/jit_lifter.cc s
 
 add_executable(Axolotl src/main.cc)
 
-target_link_libraries(Axolotl PRIVATE Axolotl_lib glfw OpenGL::GL)
+target_link_libraries(Axolotl PRIVATE Axolotl_lib glfw OpenGL::GL Qt6::Core Qt6::Widgets)
 if(UNIX)
   target_link_options(Axolotl PRIVATE -rdynamic)
 endif()
@@ -105,4 +113,6 @@ if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/res")
 endif()
 
 include(CTest)
-add_subdirectory(tests)
+if(EXISTS "${CMAKE_SOURCE_DIR}/tests/CMakeLists.txt")
+  add_subdirectory(tests)
+endif()

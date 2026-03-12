@@ -5,6 +5,7 @@
 #include "system/display.h"
 #include "util/logger.h"
 
+#include <algorithm>
 #include <cstring>
 #include <sstream>
 
@@ -162,17 +163,50 @@ static GLuint compileShaderStage(GLenum type, const char* src) {
     return s;
 }
 
+static GLFWmonitor* FindBestWindowMonitor(GLFWwindow* window) {
+    int monitor_count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&monitor_count);
+    if (!window || !monitors || monitor_count <= 0) return glfwGetPrimaryMonitor();
+
+    int wx = 0;
+    int wy = 0;
+    int ww = 0;
+    int wh = 0;
+    glfwGetWindowPos(window, &wx, &wy);
+    glfwGetWindowSize(window, &ww, &wh);
+
+    GLFWmonitor* best = glfwGetPrimaryMonitor();
+    int best_overlap = -1;
+    for (int i = 0; i < monitor_count; ++i) {
+        GLFWmonitor* monitor = monitors[i];
+        int mx = 0;
+        int my = 0;
+        glfwGetMonitorPos(monitor, &mx, &my);
+        const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+        if (!mode) continue;
+
+        const int overlap_w = std::max(0, std::min(wx + ww, mx + mode->width) - std::max(wx, mx));
+        const int overlap_h = std::max(0, std::min(wy + wh, my + mode->height) - std::max(wy, my));
+        const int overlap_area = overlap_w * overlap_h;
+        if (overlap_area > best_overlap) {
+            best_overlap = overlap_area;
+            best = monitor;
+        }
+    }
+    return best;
+}
+
 // ── Display implementation ─────────────────────────────────────────────
 
-Display::Display() {
+GlDisplay::GlDisplay() {
     std::memset(state.buffers, 0, sizeof(state.buffers));
 }
 
-Display::~Display() {
+GlDisplay::~GlDisplay() {
     shutdown();
 }
 
-bool Display::init() {
+bool GlDisplay::init() {
     if (!glfwInit()) {
         Logger::log("[Display] glfwInit failed", LogLevel::ERR);
         return false;
@@ -207,16 +241,15 @@ bool Display::init() {
     createTexture();
     buildQuadVAO();
 
-    int fbW, fbH;
-    glfwGetFramebufferSize(state.window, &fbW, &fbH);
-    glViewport(0, 0, fbW, fbH);
+    glfwGetFramebufferSize(state.window, &state.last_fb_width, &state.last_fb_height);
+    glViewport(0, 0, state.last_fb_width, state.last_fb_height);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
     Logger::log("[Display] Initialised — 720×480 (Mode 3, 3× scale)", LogLevel::INFO);
     return true;
 }
 
-bool Display::tick() {
+bool GlDisplay::tick() {
     if (!state.window) return false;
 
     if (glfwWindowShouldClose(state.window)) {
@@ -225,6 +258,7 @@ bool Display::tick() {
     }
 
     glfwPollEvents();
+    updateViewportIfNeeded();
 
     if (state.frameDirty.exchange(false)) {
         int readIdx = state.frontIndex.load(std::memory_order_acquire);
@@ -248,7 +282,7 @@ bool Display::tick() {
     return true;
 }
 
-void Display::shutdown() {
+void GlDisplay::shutdown() {
     if (!state.window) return;
 
     if (state.shader)  { glDeleteProgram_(state.shader);         state.shader  = 0; }
@@ -263,7 +297,7 @@ void Display::shutdown() {
     Logger::log("[Display] Shut down", LogLevel::INFO);
 }
 
-void Display::submitFrame(const uint8_t* vram, uint32_t vramSize) {
+void GlDisplay::submitFrame(const uint8_t* vram, uint32_t vramSize) {
     int writeIdx = 1 - state.frontIndex.load(std::memory_order_acquire);
     uint8_t* dst = state.buffers[writeIdx];
 
@@ -289,17 +323,44 @@ void Display::submitFrame(const uint8_t* vram, uint32_t vramSize) {
     state.frameDirty.store(true,     std::memory_order_release);
 }
 
-bool Display::shouldClose() const {
+bool GlDisplay::shouldClose() const {
     return state.closed.load(std::memory_order_relaxed);
 }
 
-void Display::requestClose() {
+void GlDisplay::requestClose() {
     state.closed.store(true, std::memory_order_relaxed);
+}
+
+void GlDisplay::toggleFullscreen() {
+    if (!state.window) return;
+
+    if (!state.fullscreen) {
+        glfwGetWindowPos(state.window, &state.windowed_x, &state.windowed_y);
+        glfwGetWindowSize(state.window, &state.windowed_width, &state.windowed_height);
+
+        GLFWmonitor* monitor = FindBestWindowMonitor(state.window);
+        const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+        if (!monitor || !mode) return;
+
+        glfwSetWindowMonitor(state.window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+        state.fullscreen = true;
+    } else {
+        if (state.windowed_width <= 0 || state.windowed_height <= 0) {
+            state.windowed_width = DisplayState::GBA_WIDTH * DisplayState::SCALE;
+            state.windowed_height = DisplayState::GBA_HEIGHT * DisplayState::SCALE;
+        }
+        glfwSetWindowMonitor(state.window, nullptr,
+                             state.windowed_x, state.windowed_y,
+                             state.windowed_width, state.windowed_height,
+                             0);
+        state.fullscreen = false;
+    }
+    updateViewportIfNeeded();
 }
 
 // ── Private helpers ────────────────────────────────────────────────────
 
-void Display::createTexture() {
+void GlDisplay::createTexture() {
     glGenTextures(1, &state.texture);
     glBindTexture(GL_TEXTURE_2D, state.texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -310,7 +371,7 @@ void Display::createTexture() {
                  GL_RGB, GL_UNSIGNED_BYTE, state.buffers[0]);
 }
 
-void Display::buildQuadVAO() {
+void GlDisplay::buildQuadVAO() {
     float vertices[] = {
         // pos        // uv
         -1.f, -1.f,   0.f, 1.f,
@@ -335,7 +396,7 @@ void Display::buildQuadVAO() {
     glBindVertexArray_(0);
 }
 
-void Display::compileShaders() {
+void GlDisplay::compileShaders() {
     GLuint vert = compileShaderStage(GL_VERTEX_SHADER,   VERT_SRC);
     GLuint frag = compileShaderStage(GL_FRAGMENT_SHADER, FRAG_SRC);
 
@@ -356,4 +417,18 @@ void Display::compileShaders() {
 
     glDeleteShader_(vert);
     glDeleteShader_(frag);
+}
+
+void GlDisplay::updateViewportIfNeeded() {
+    if (!state.window) return;
+
+    int fb_w = 0;
+    int fb_h = 0;
+    glfwGetFramebufferSize(state.window, &fb_w, &fb_h);
+    if (fb_w <= 0 || fb_h <= 0) return;
+    if (fb_w == state.last_fb_width && fb_h == state.last_fb_height) return;
+
+    state.last_fb_width = fb_w;
+    state.last_fb_height = fb_h;
+    glViewport(0, 0, fb_w, fb_h);
 }

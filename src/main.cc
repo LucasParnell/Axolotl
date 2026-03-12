@@ -9,11 +9,19 @@
 #include <vector>
 #include <cstring>
 
+#include <QApplication>
+#include <QCoreApplication>
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/mman.h>
 #endif
 
+#include "data/input_mapping_data.h"
 #include "util/logger.h"
+#include "system/config/config_reader.h"
 #include "system/memory_bus.h"
 #include "system/crash_handler.h"
 #include "system/display.h"
@@ -22,6 +30,8 @@
 #include "system/block_compile_cache.h"
 #include "system/jit_emitter.h"
 #include "data/block_map.h"
+#include "system/input/input_mapping_system.h"
+#include "system/input/input_mapping_window.h"
 #include "system/seed_queue.h"
 #include "system/dispatcher.h"
 #include "system/prewarm_pacing.h"
@@ -61,6 +71,13 @@ static uint64_t EnvU64(const char* key, uint64_t default_value) {
 }
 
 int main(int argc, char* argv[]) {
+    QApplication qt_app(argc, argv);
+    qt_app.setQuitOnLastWindowClosed(false);
+    const std::filesystem::path executable_dir =
+        std::filesystem::path(QCoreApplication::applicationDirPath().toStdString());
+    const std::string config_path =
+        (executable_dir / "config.ini").lexically_normal().string();
+
     Logger::setOnWarning([](const std::string& msg) {
         std::cerr << "WARN: " << msg << std::endl;
     });
@@ -225,7 +242,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    Display display;
+    GlDisplay display;
     if (!display.init()) {
         Logger::log("Failed to init display.", LogLevel::ERR);
         return -1;
@@ -234,6 +251,14 @@ int main(int argc, char* argv[]) {
     AudioSystem audio;
     audio.Start();
     bus.SetAudioSampleCallback(&AudioBatchSink, &audio);
+
+    ConfigReader config_reader(config_path);
+    InputConfigData input_config;
+    config_reader.Load(&input_config);
+    InputMappingSystem input_mapping_system(&display);
+    input_mapping_system.SyncProfilesWithDevices(&input_config);
+    InputMappingWindow input_window(&input_config, &config_reader, &input_mapping_system);
+    input_window.hide();
 
     PPU ppu;
 #if ENABLE_LOGO_VRAM_CHECK
@@ -329,6 +354,10 @@ int main(int argc, char* argv[]) {
     std::thread pw_thread([&prewarmer]() { prewarmer.ThreadLoop(); });
     std::thread jit_thread([&dispatcher]() { dispatcher.Run(0x00000000, false); });
 
+    bool f11_prev_down = false;
+    bool f12_prev_down = false;
+    bool menu_open_prev = false;
+
 #ifdef B_DEBUG
     // Console blocks on stdin; run it on its own thread so the emulator keeps going.
     // The console calls dispatcher.RequestPause() / Resume() / StepBlocks() to
@@ -338,6 +367,35 @@ int main(int argc, char* argv[]) {
     std::thread console_thread([&console]() { console.Run(); });
 #endif
     while (display.tick()) {
+        QCoreApplication::processEvents();
+
+        const bool f11_now_down = glfwGetKey(display.GetWindow(), GLFW_KEY_F11) == GLFW_PRESS;
+        if (!f11_prev_down && f11_now_down) {
+            display.toggleFullscreen();
+        }
+        f11_prev_down = f11_now_down;
+
+        const bool f12_now_down = glfwGetKey(display.GetWindow(), GLFW_KEY_F12) == GLFW_PRESS;
+        if (!f12_prev_down && f12_now_down) {
+            if (input_window.isVisible()) {
+                input_window.hide();
+            } else {
+                input_window.show();
+                input_window.raise();
+                input_window.activateWindow();
+            }
+        }
+        f12_prev_down = f12_now_down;
+
+        const bool menu_open = input_window.isVisible();
+        if (menu_open != menu_open_prev) {
+            dispatcher.SetHostPaused(menu_open);
+            menu_open_prev = menu_open;
+        }
+
+        input_window.Tick();
+        input_mapping_system.PollAndApply(input_config, &bus);
+
         // The display loop only cares about pushing completed frames to OpenGL.
         // PPU snapshot + framebuffer swap happen on the JIT thread (on_scanline_start)
         // so we just submit the already-completed framebuffer here.
